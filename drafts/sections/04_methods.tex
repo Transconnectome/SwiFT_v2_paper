@@ -3,11 +3,21 @@
 \subsection{Overview and Architectural Evolution}
 Building upon the foundation of the Swin 4D fMRI Transformer (SwiFT) architecture proposed by \cite{kim2023swift}, our framework extends the hierarchical vision transformer to the domain of 4D spatio-temporal representation learning. We investigate two distinct architectural paradigms for self-supervised pre-training based on Masked Image Modeling (SimMIM \cite{xie2022simmim}): the \textbf{d-SwiFT} (Decoupled SwiFT, Proposed) and the \textbf{u-SwiFT} (Unified SwiFT, Baseline). The input fMRI volume $\mathcal{V} \in \mathbb{R}^{T \times H \times W \times D}$ is processed through a hierarchical four-stage encoder, where each stage consists of multiple Transformer blocks followed by a patch merging layer to reduce spatial resolution while increasing feature dimension.
 
-\subsection{Patch Partitioning and Temporal Resolution}
-A critical divergence in our study lies in the initial patch embedding strategy, designed to analyze the trade-off between temporal fidelity and computational context.
+\subsection{Strategic Allocation of Computational Budget: Resolution and Context}
+A critical divergence in our study lies in how each architecture navigates the trade-off between spatio-temporal fidelity and computational complexity. We explicitly tailored the input resolution and attention context for each model to reflect the physical constraints inherent to their designs.
+
 \begin{itemize}
-    \item \textbf{d-SwiFT (Proposed):} To preserve intrinsic voxel-wise dynamics without aliasing, we employ a patch size of $P = 1 \times 6 \times 6 \times 6$. By maintaining the temporal dimension ($P_T=1$), the model retains the original sampling rate (TR), enabling the capture of high-frequency BOLD fluctuations and non-linear properties such as the Hurst exponent.
-    \item \textbf{u-SwiFT (Baseline):} Following the original SwiFT protocol, this variant uses a patch size of $P = 2 \times 6 \times 6 \times 6$. The temporal downsampling ($P_T=2$) is employed to mitigate the quadratic complexity of 4D self-attention, compressing the temporal context to form a unified spatio-temporal manifold.
+    \item \textbf{Patch Partitioning:}
+    \begin{itemize}
+        \item \textbf{d-SwiFT (High-Fidelity):} The decoupled attention mechanism of d-SwiFT significantly reduces memory complexity, \textbf{unlocking the feasibility of preserving the original temporal resolution.} We employ a patch size of $P = 1 \times 6 \times 6 \times 6$ ($P_T=1$). This design choice is a structural advantage enabled by our proposed factorization, allowing the model to capture high-frequency BOLD fluctuations without aliasing.
+        \item \textbf{u-SwiFT (Efficiency-Constrained):} Following standard video transformer protocols \cite{liu2022video}, this variant uses a patch size of $P = 2 \times 6 \times 6 \times 6$. \textbf{Due to the quadratic complexity of unified 4D self-attention, temporal downsampling ($P_T=2$) is a prerequisite} to maintain computational feasibility within limited GPU memory.
+    \end{itemize}
+
+    \item \textbf{Attention Context (Window Size):}
+    \begin{itemize}
+        \item \textbf{d-SwiFT (Expanded Context):} The factorization of spatio-temporal attention ($O(T^2 + S^2)$) yields superior memory efficiency compared to the unified approach ($O((TS)^2)$). Leveraging this efficiency, we expanded the temporal attention window to size 10 (resulting in a $10 \times 4 \times 4 \times 4$ window). This allows the model to aggregate context over longer temporal sequences within a single block, enhancing the capture of long-range dependencies.
+        \item \textbf{u-SwiFT (Limited Context):} Conversely, the u-SwiFT baseline is constrained by the heavy memory footprint of dense 4D attention. To fit the model within the same hardware budget, we were restricted to a smaller window size of $4 \times 4 \times 4 \times 4$, limiting the immediate temporal receptive field compared to d-SwiFT.
+    \end{itemize}
 \end{itemize}
 
 \subsection{d-SwiFT Architecture (Signal-First Philosophy)}
@@ -15,14 +25,14 @@ The d-SwiFT model is designed to prioritize temporal integrity. It factorizes th
 \begin{equation}
     \mathbf{q}'_t = f_{\text{RoPE}}(\mathbf{q}_t, t), \quad \mathbf{k}'_t = f_{\text{RoPE}}(\mathbf{k}_t, t)
 \end{equation}
-Subsequently, spatial context is injected via \textbf{3D Spatial Attention} equipped with Axial RoPE. Crucially, we employ a weighted residual connection to modulate the temporal backbone:
+Subsequently, spatial context is injected via 3D Spatial Attention equipped with Axial RoPE. Crucially, we employ a weighted residual connection to modulate the temporal backbone:
 \begin{equation}
     \mathbf{H}_{\text{out}} = \text{LayerNorm}(\mathbf{H}_{\text{temp}} + \lambda \cdot \mathbf{H}_{\text{spat}})
 \end{equation}
 where $\lambda$ is a fixed scaling factor set to $0.9$. Given that anatomical spatial information in fMRI data exhibits high redundancy across temporal frames (stationarity), this fixed weighting ensures that the spatial context stably anchors the temporal features without overwhelming the voxel-wise dynamics.
 
 \subsection{u-SwiFT Architecture (Unified Manifold Baseline)}
-As a comparative baseline, the u-SwiFT model \textbf{directly adopts the backbone architecture of the original Swin 4D fMRI Transformer (SwiFT)} proposed by Moon et al. It utilizes \textbf{4D Shifted-Window Attention} to capture joint spatio-temporal features, employing separate Absolute Position Embeddings (APE) for spatial and temporal axes. While the original SwiFT was primarily explored for supervised tasks, here we adapt it for self-supervised learning by integrating it with our proposed decoder. This model requires temporal downsampling ($P_T=2$) to maintain computational feasibility within the 4D attention window.
+As a comparative baseline, the u-SwiFT model directly adopts the backbone architecture of the original Swin 4D fMRI Transformer (SwiFT) proposed by Moon et al. It utilizes 4D Shifted-Window Attention to capture joint spatio-temporal features, employing separate Absolute Position Embeddings (APE) for spatial and temporal axes. While the original SwiFT was primarily explored for supervised tasks, here we adapt it for self-supervised learning by integrating it with our proposed decoder. This model requires temporal downsampling ($P_T=2$) to maintain computational feasibility within the 4D attention window.
 
 \begin{table}[h]
 \centering
@@ -35,6 +45,7 @@ As a comparative baseline, the u-SwiFT model \textbf{directly adopts the backbon
 \textbf{Backbone Origin} & Newly Proposed & Adapted from SwiFT \\
 \textbf{Patch Size} & $1 \times 6 \times 6 \times 6$ & $2 \times 6 \times 6 \times 6$ \\
 \textbf{Attention Type} & Decoupled (1D $\to$ 3D) & Unified 4D Shifted Window \\
+\textbf{Attention Window Size} & $10 \times 4 \times 4 \times 4$ & $4 \times 4 \times 4 \times 4$ \\
 \textbf{Positional Enc.} & Rotary PE (Relative) & Absolute PE (Dual-stream) \\
 \textbf{Inductive Bias} & Temporal Fidelity & Spatio-Temporal Hierarchy \\
 \bottomrule
@@ -42,4 +53,7 @@ As a comparative baseline, the u-SwiFT model \textbf{directly adopts the backbon
 \end{table}
 
 \subsection{Sequential Factorized Decoder}
-To enable scalable self-supervised learning via Masked Image Modeling, \textbf{both the d-SwiFT and u-SwiFT backbones are equipped with a symmetric Sequential Factorized Decoder (SFD).} Addressing the memory bottleneck of 4D reconstruction, the SFD upsamples the latent representation $\mathbf{Z}$ in two decoupled phases. First, \textit{Temporal Expansion} restores the time axis ($T/P_T \to T$) using an MLP and 1D Pixel-Shuffle layers. Second, \textit{Spatial Expansion} reconstructs the anatomical volume ($HWD/6^3 \to HWD$) using 3D Pixel-Shuffle layers. This factorization reduces decoder complexity from multiplicative $O(D \cdot r_t r_s)$ to additive $O(D \cdot r_t + D \cdot r_s)$, making high-resolution 4D synthesis feasible.
+To enable scalable self-supervised learning via Masked Image Modeling, both the d-SwiFT and u-SwiFT backbones are equipped with a symmetric Sequential Factorized Decoder (SFD). Addressing the memory bottleneck of 4D reconstruction, the SFD upsamples the latent representation $\mathbf{Z}$ in two decoupled phases. First, \textit{Temporal Expansion} restores the time axis ($T/P_T \to T$) using an MLP and 1D Pixel-Shuffle layers. Second, \textit{Spatial Expansion} reconstructs the anatomical volume ($HWD/6^3 \to HWD$) using 3D Pixel-Shuffle layers. This factorization reduces decoder complexity from multiplicative $O(D \cdot r_t r_s)$ to additive $O(D \cdot r_t + D \cdot r_s)$, making high-resolution 4D synthesis feasible.
+
+\subsection{Masking Strategy: Domain Adaptation}
+For self-supervised pre-training, we adopted masking ratios that are optimized for the respective inductive biases of each architecture. \begin{itemize} \item \textbf{u-SwiFT:} We adopted a masking ratio of 0.6, following the original SimMIM protocol \cite{xie2022simmim}. As u-SwiFT adapts vision-based priors, this ratio balances the difficulty of reconstruction with the spatial coherence typical of visual data. \item \textbf{d-SwiFT:} Considering the high spatio-temporal redundancy of BOLD signals compared to natural images, we increased the masking ratio to 0.8. Our decoupled architecture's robust capture of temporal dynamics allows the model to reconstruct signals from sparser inputs, demonstrating superior utilization of the fMRI data structure. \end{itemize}
